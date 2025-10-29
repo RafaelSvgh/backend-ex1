@@ -512,7 +512,7 @@ export class RoomService extends PrismaClient implements OnModuleInit {
             targetEntity: fromEntity.name,
             relationType: 'ManyToOne',
             mappedBy: undefined,
-            joinColumn: `${fromEntity.name.toLowerCase()}_id`
+            joinColumn: `${fromEntity.name.toLowerCase()}Id`
           });
           
         } else if (link.fromMultiplicity === '*' && link.toMultiplicity === '1') {
@@ -522,7 +522,7 @@ export class RoomService extends PrismaClient implements OnModuleInit {
             targetEntity: toEntity.name,
             relationType: 'ManyToOne',
             mappedBy: undefined,
-            joinColumn: `${toEntity.name.toLowerCase()}_id`
+            joinColumn: `${toEntity.name.toLowerCase()}Id`
           });
           
           // To: OneToMany hacia From
@@ -539,7 +539,7 @@ export class RoomService extends PrismaClient implements OnModuleInit {
             targetEntity: toEntity.name,
             relationType: 'OneToOne',
             mappedBy: undefined,
-            joinColumn: `${toEntity.name.toLowerCase()}_id`
+            joinColumn: `${toEntity.name.toLowerCase()}Id`
           });
           
           toEntity.relations.push({
@@ -1045,7 +1045,7 @@ public class ${entityName}Controller {
     // Reglas generales
     if (word.endsWith('s') || word.endsWith('sh') || word.endsWith('ch') || 
         word.endsWith('x') || word.endsWith('z')) {
-      return word + 'es';
+      return word + 's';
     } else if (word.endsWith('y') && word.length > 1 && 
                !'aeiou'.includes(word[word.length - 2])) {
       return word.slice(0, -1) + 'ies';
@@ -1055,12 +1055,12 @@ public class ${entityName}Controller {
       return word.slice(0, -2) + 'ves';
     } else if (word.endsWith('o') && word.length > 1 && 
                !'aeiou'.includes(word[word.length - 2])) {
-      return word + 'es';
+      return word + 's';
     } else {
       return word + 's';
     }
   }
-
+// entity == entities
   private generateCreateDtoTemplate(entityName: string, attributes: ParsedAttribute[], relations?: EntityRelation[]): string {
     let content = `package com.example.back_examen.dto;
 
@@ -1509,7 +1509,7 @@ public class ${entityName}ResponseDto {
             targetEntity: fromEntity.name,
             relationType: 'ManyToOne',
             mappedBy: undefined,
-            joinColumn: `${fromEntity.name.toLowerCase()}_id`
+            joinColumn: `${fromEntity.name.toLowerCase()}Id`
           });
           
         } else if (link.fromMultiplicity === '*' && link.toMultiplicity === '1') {
@@ -1517,7 +1517,7 @@ public class ${entityName}ResponseDto {
             targetEntity: toEntity.name,
             relationType: 'ManyToOne',
             mappedBy: undefined,
-            joinColumn: `${toEntity.name.toLowerCase()}_id`
+            joinColumn: `${toEntity.name.toLowerCase()}Id`
           });
           
           toEntity.relations.push({
@@ -1532,7 +1532,7 @@ public class ${entityName}ResponseDto {
             targetEntity: toEntity.name,
             relationType: 'OneToOne',
             mappedBy: undefined,
-            joinColumn: `${toEntity.name.toLowerCase()}_id`
+            joinColumn: `${toEntity.name.toLowerCase()}Id`
           });
           
           toEntity.relations.push({
@@ -1612,6 +1612,12 @@ public class ${entityName}ResponseDto {
       return `  final ${dartType}? ${attr.name};`;
     }).join('\n');
 
+    // Agregar campos para foreign keys de relaciones ManyToOne
+    const foreignKeyFields = relations
+      .filter(rel => rel.relationType === 'ManyToOne' && rel.joinColumn)
+      .map(rel => `  final int? ${rel.joinColumn};`)
+      .join('\n');
+
     const relationFields = relations.map(rel => {
       if (rel.relationType === 'OneToMany') {
         return `  final List<${rel.targetEntity}>? ${rel.targetEntity.toLowerCase()}s;`;
@@ -1621,6 +1627,12 @@ public class ${entityName}ResponseDto {
     }).join('\n');
 
     const constructorParams = attributes.map(attr => `this.${attr.name}`).join(', ');
+    
+    const foreignKeyParams = relations
+      .filter(rel => rel.relationType === 'ManyToOne' && rel.joinColumn)
+      .map(rel => `this.${rel.joinColumn}`)
+      .join(', ');
+    
     const relationParams = relations.map(rel => {
       if (rel.relationType === 'OneToMany') {
         return `this.${rel.targetEntity.toLowerCase()}s`;
@@ -1629,13 +1641,15 @@ public class ${entityName}ResponseDto {
       }
     }).join(', ');
 
-    const allParams = [constructorParams, relationParams].filter(p => p).join(', ');
+    const allParams = ['this.id', constructorParams, foreignKeyParams, relationParams].filter(p => p).join(', ');
 
     const jsonConstructor = this.generateFlutterFromJsonConstructor(entityName, attributes, relations);
     const toJsonMethod = this.generateFlutterToJsonMethod(attributes, relations);
 
     return `class ${entityName} {
+  final int? id;
 ${fields}
+${foreignKeyFields}
 ${relationFields}
 
   const ${entityName}({
@@ -1657,6 +1671,12 @@ ${relationFields}
       return `    ${attr.name}: json['${attr.name}'],`;
     }).join('\n');
 
+    // Mapear foreign keys de relaciones ManyToOne
+    const foreignKeyMappings = relations
+      .filter(rel => rel.relationType === 'ManyToOne' && rel.joinColumn)
+      .map(rel => `    ${rel.joinColumn}: json['${rel.joinColumn}'],`)
+      .join('\n');
+
     const relationMappings = relations.map(rel => {
       if (rel.relationType === 'OneToMany') {
         return `    ${rel.targetEntity.toLowerCase()}s: json['${rel.targetEntity.toLowerCase()}s'] != null 
@@ -1669,10 +1689,11 @@ ${relationFields}
       }
     }).join('\n');
 
+    const allMappings = ['    id: json[\'id\'],', attributeMappings, foreignKeyMappings, relationMappings].filter(m => m).join('\n');
+
     return `factory ${entityName}.fromJson(Map<String, dynamic> json) {
     return ${entityName}(
-${attributeMappings}
-${relationMappings}
+${allMappings}
     );
   }`;
   }
@@ -1685,6 +1706,12 @@ ${relationMappings}
       return `      '${attr.name}': ${attr.name},`;
     }).join('\n');
 
+    // Incluir foreign keys en toJson
+    const foreignKeyMappings = relations
+      .filter(rel => rel.relationType === 'ManyToOne' && rel.joinColumn)
+      .map(rel => `      '${rel.joinColumn}': ${rel.joinColumn},`)
+      .join('\n');
+
     const relationMappings = relations.map(rel => {
       if (rel.relationType === 'OneToMany') {
         return `      '${rel.targetEntity.toLowerCase()}s': ${rel.targetEntity.toLowerCase()}s?.map((e) => e.toJson()).toList(),`;
@@ -1693,10 +1720,11 @@ ${relationMappings}
       }
     }).join('\n');
 
+    const allMappings = ['      \'id\': id,', attributeMappings, foreignKeyMappings, relationMappings].filter(m => m).join('\n');
+
     return `Map<String, dynamic> toJson() {
     return {
-${attributeMappings}
-${relationMappings}
+${allMappings}
     };
   }`;
   }
@@ -1707,7 +1735,7 @@ import 'package:http/http.dart' as http;
 import '../models/${lowerEntityName}_model.dart';
 
 class ${entityName}Service {
-  final String apiUrl = 'http://10.0.2.2:8080/${lowerEntityName}s';
+  final String apiUrl = 'http://10.0.2.2:8080/api/${lowerEntityName}s';
 
   Future<List<${entityName}>> getAll() async {
     final response = await http.get(Uri.parse(apiUrl));
@@ -1737,7 +1765,7 @@ class ${entityName}Service {
       body: json.encode(${lowerEntityName}.toJson()),
     );
     
-    if (response.statusCode == 201) {
+    if (response.statusCode <= 201) {
       return ${entityName}.fromJson(json.decode(response.body));
     } else {
       throw Exception('Failed to create ${lowerEntityName}');
@@ -1761,7 +1789,7 @@ class ${entityName}Service {
   Future<void> delete(int id) async {
     final response = await http.delete(Uri.parse('\$apiUrl/\$id'));
     
-    if (response.statusCode != 204) {
+    if (response.statusCode > 204) {
       throw Exception('Failed to delete ${lowerEntityName}');
     }
   }
@@ -1771,12 +1799,53 @@ class ${entityName}Service {
 
   private generateFlutterCRUDPage(entityName: string, attributes: ParsedAttribute[], relations: EntityRelation[]): string {
     const lowerEntityName = entityName.toLowerCase();
-    const formFields = this.generateFlutterFormFields(attributes, relations);
+    const formFields = this.generateFlutterFormFieldsWithRelations(attributes, relations);
     const listTileFields = this.generateFlutterListTileFields(attributes);
+    
+    // Generar imports de servicios relacionados
+    const relatedImports = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `import '../models/${rel.targetEntity.toLowerCase()}_model.dart';\nimport '../services/${rel.targetEntity.toLowerCase()}_service.dart';`)
+      .join('\n');
+
+    // Generar declaraciones de servicios relacionados
+    const relatedServiceDeclarations = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `  final ${rel.targetEntity}Service _${rel.targetEntity.toLowerCase()}Service = ${rel.targetEntity}Service();`)
+      .join('\n');
+
+    // Generar listas para entidades relacionadas
+    const relatedListDeclarations = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `  List<${rel.targetEntity}> _available${rel.targetEntity}s = [];`)
+      .join('\n');
+
+    // Generar carga de entidades relacionadas
+    const loadRelatedEntities = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `    _load${rel.targetEntity}s();`)
+      .join('\n');
+
+    // Generar métodos de carga
+    const loadRelatedMethods = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `
+  Future<void> _load${rel.targetEntity}s() async {
+    try {
+      final items = await _${rel.targetEntity.toLowerCase()}Service.getAll();
+      setState(() {
+        _available${rel.targetEntity}s = items;
+      });
+    } catch (e) {
+      print('Error loading ${rel.targetEntity.toLowerCase()}s: \$e');
+    }
+  }`)
+      .join('\n');
 
     return `import 'package:flutter/material.dart';
 import '../models/${lowerEntityName}_model.dart';
 import '../services/${lowerEntityName}_service.dart';
+${relatedImports}
 
 class ${entityName}Page extends StatefulWidget {
   const ${entityName}Page({super.key});
@@ -1787,13 +1856,16 @@ class ${entityName}Page extends StatefulWidget {
 
 class _${entityName}PageState extends State<${entityName}Page> {
   final ${entityName}Service _service = ${entityName}Service();
+${relatedServiceDeclarations}
   List<${entityName}> _items = [];
+${relatedListDeclarations}
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadItems();
+${loadRelatedEntities}
   }
 
   Future<void> _loadItems() async {
@@ -1810,6 +1882,7 @@ class _${entityName}PageState extends State<${entityName}Page> {
       _showErrorDialog('Error loading ${lowerEntityName}s: \$e');
     }
   }
+${loadRelatedMethods}
 
   Future<void> _showCreateDialog() async {
     await _showFormDialog(null);
@@ -1821,6 +1894,7 @@ class _${entityName}PageState extends State<${entityName}Page> {
 
   Future<void> _showFormDialog(${entityName}? item) async {
     ${formFields.controllers}
+    ${formFields.stateVariables}
 
     if (item != null) {
       ${formFields.initialization}
@@ -1828,31 +1902,33 @@ class _${entityName}PageState extends State<${entityName}Page> {
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(item == null ? 'Create ${entityName}' : 'Edit ${entityName}'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ${formFields.widgets}
-            ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(item == null ? 'Create ${entityName}' : 'Edit ${entityName}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ${formFields.widgets}
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await _saveItem(item, {
+                  ${formFields.values}
+                });
+                Navigator.pop(context);
+              },
+              child: Text(item == null ? 'Create' : 'Update'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              await _saveItem(item, {
-                ${formFields.values}
-              });
-              Navigator.pop(context);
-            },
-            child: Text(item == null ? 'Create' : 'Update'),
-          ),
-        ],
       ),
     );
   }
@@ -1965,6 +2041,93 @@ class _${entityName}PageState extends State<${entityName}Page> {
   }
 }
 `;
+  }
+
+  private generateFlutterFormFieldsWithRelations(attributes: ParsedAttribute[], relations: EntityRelation[]) {
+    // Controllers para atributos regulares
+    const controllers = attributes.map(attr => {
+      return `final _${attr.name}Controller = TextEditingController();`;
+    }).join('\n    ');
+
+    // Variables de estado para relaciones ManyToOne
+    const stateVariables = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `${rel.targetEntity}? _selected${rel.targetEntity};`)
+      .join('\n    ');
+
+    // Inicialización de controllers
+    const initialization = attributes.map(attr => {
+      if (attr.type === 'DateTime') {
+        return `_${attr.name}Controller.text = item.${attr.name}?.toIso8601String() ?? '';`;
+      }
+      return `_${attr.name}Controller.text = item.${attr.name}?.toString() ?? '';`;
+    }).join('\n      ');
+
+    // Inicialización de relaciones
+    const relationInitialization = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `_selected${rel.targetEntity} = item.${rel.targetEntity.toLowerCase()};`)
+      .join('\n      ');
+
+    const fullInitialization = [initialization, relationInitialization].filter(i => i).join('\n      ');
+
+    // Widgets: TextFields para atributos y Dropdowns para relaciones
+    const attributeWidgets = attributes.map(attr => {
+      return `TextField(
+                controller: _${attr.name}Controller,
+                decoration: InputDecoration(labelText: '${this.capitalizeFirstLetter(attr.name)}'),
+              ),`;
+    }).join('\n              ');
+
+    const relationWidgets = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => {
+        return `DropdownButtonFormField<${rel.targetEntity}>(
+                value: _selected${rel.targetEntity},
+                decoration: InputDecoration(labelText: 'Select ${rel.targetEntity}'),
+                items: _available${rel.targetEntity}s.map((${rel.targetEntity.toLowerCase()}) {
+                  return DropdownMenuItem<${rel.targetEntity}>(
+                    value: ${rel.targetEntity.toLowerCase()},
+                    child: Text(${rel.targetEntity.toLowerCase()}.name?.toString() ?? ${rel.targetEntity.toLowerCase()}.id?.toString() ?? 'Unknown'),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setDialogState(() {
+                    _selected${rel.targetEntity} = value;
+                  });
+                },
+              ),`;
+      }).join('\n              ');
+
+    const allWidgets = [attributeWidgets, relationWidgets].filter(w => w).join('\n              ');
+
+    // Values para el JSON
+    const attributeValues = attributes.map(attr => {
+      if (attr.type === 'int' || attr.type === 'Integer') {
+        return `'${attr.name}': int.tryParse(_${attr.name}Controller.text),`;
+      } else if (attr.type === 'double' || attr.type === 'Double') {
+        return `'${attr.name}': double.tryParse(_${attr.name}Controller.text),`;
+      } else if (attr.type === 'DateTime') {
+        return `'${attr.name}': _${attr.name}Controller.text.isNotEmpty ? _${attr.name}Controller.text : null,`;
+      }
+      return `'${attr.name}': _${attr.name}Controller.text,`;
+    }).join('\n                ');
+
+    // Values para relaciones (enviar el ID de la entidad relacionada)
+    const relationValues = relations
+      .filter(rel => rel.relationType === 'ManyToOne')
+      .map(rel => `'${rel.joinColumn}': _selected${rel.targetEntity}?.id,`)
+      .join('\n                ');
+
+    const allValues = [attributeValues, relationValues].filter(v => v).join('\n                ');
+
+    return {
+      controllers,
+      stateVariables,
+      initialization: fullInitialization,
+      widgets: allWidgets,
+      values: allValues
+    };
   }
 
   private generateFlutterFormFields(attributes: ParsedAttribute[], relations: EntityRelation[]) {

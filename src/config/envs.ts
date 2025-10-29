@@ -6,6 +6,7 @@ interface EnvVars {
   DATABASE_URL: string;
   JWT_SECRET: string;
   JWT_EXPIRES_IN: string;
+  OPENAI_API_KEY: string;
 }
 
 const envVarsSchema = joi
@@ -14,6 +15,7 @@ const envVarsSchema = joi
     DATABASE_URL: joi.string().uri().required(),
     JWT_SECRET: joi.string().required(),
     JWT_EXPIRES_IN: joi.string().default('1d'),
+    OPENAI_API_KEY: joi.string().required(),
   })
   .unknown(true);
 
@@ -30,4 +32,5 @@ export const envs = {
   databaseUrl: envVars.DATABASE_URL,
   jwtSecret: envVars.JWT_SECRET,
   jwtExpiresIn: envVars.JWT_EXPIRES_IN,
+  openaiApiKey: envVars.OPENAI_API_KEY,
 };
