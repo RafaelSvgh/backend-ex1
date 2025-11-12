@@ -32,7 +32,7 @@ export class UserGateway implements OnModuleInit {
               (userId) => userId !== socket.id,
             );
             if (this.rooms[room].users.length === 0) {
-              delete this.rooms[room];
+              // delete this.rooms[room];
             }
             console.log(`Cliente ${socket.id} eliminado de la sala ${room}`);
           }
@@ -52,6 +52,8 @@ export class UserGateway implements OnModuleInit {
           this.rooms[payload] = { users: [socket.id], diagrama: {} };
         } else {
           socket.join(payload);
+          console.log(`Usuario ${socket.id} reconectado a la sala ${payload}`);
+          console.log(this.rooms);
           if (!this.rooms[payload].users.includes(socket.id)) {
             this.rooms[payload].users.push(socket.id);
           }

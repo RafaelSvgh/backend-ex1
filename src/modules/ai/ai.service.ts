@@ -458,6 +458,176 @@ export class AiService {
       }
     }
 
+    
     return changes;
+  }
+
+  async validateAndCorrectDiagram(gojsDiagram: any) {
+    try {
+      // Validar que el JSON tenga la estructura correcta
+      if (!gojsDiagram.nodeDataArray || !gojsDiagram.linkDataArray) {
+        throw new BadRequestException('El JSON debe contener nodeDataArray y linkDataArray');
+      }
+
+      // Contexto especializado para validar y corregir diagramas GoJS
+      const systemMessage = 
+        'Eres un experto en diagramas UML y modelado de bases de datos. Tu tarea es analizar un diagrama GoJS y determinar si está correctamente construido o si requiere correcciones.\n\n' +
+        
+        '**CRITERIOS DE VALIDACIÓN:**\n\n' +
+        
+        '1. **LÓGICA DE RELACIONES:**\n' +
+        '   - Verificar que las multiplicidades tengan sentido lógico\n' +
+        '   - Ejemplo INCORRECTO: "Post pertenece a muchos Users" → debe ser "User tiene muchos Posts"\n' +
+        '   - Ejemplo CORRECTO: User (1) → Posts (*), Cliente (1) → Pedidos (*)\n\n' +
+        
+        '2. **CONSISTENCIA DE MULTIPLICIDADES:**\n' +
+        '   - Solo usar "1" o "*" (nunca 0..1, 1..*, etc.)\n' +
+        '   - Composición: parte (*) → todo (1)\n' +
+        '   - Agregación: elementos (*) → contenedor (1)\n' +
+        '   - Herencia: hijos (*) → padre (1)\n\n' +
+        
+        '3. **ERRORES ORTOGRÁFICOS:**\n' +
+        '   - Nombres de clases con primera letra mayúscula\n' +
+        '   - Atributos en minúscula\n' +
+        '   - Corregir errores de escritura en nombres\n' +
+        '   - Nombres en singular para clases (User, Post, no Users, Posts)\n\n' +
+        
+        '4. **ESTRUCTURA GOJS VÁLIDA:**\n' +
+        '   - Verificar keys únicos y negativos\n' +
+        '   - Coordenadas válidas en "loc"\n' +
+        '   - Referencias correctas en from/to de linkDataArray\n\n' +
+        
+        '5. **CONVENCIONES UML:**\n' +
+        '   - Atributos con tipo especificado (nombre: String, edad: int)\n' +
+        '   - Métodos con tipo de retorno (getName(): String)\n' +
+        '   - Relaciones semánticamente correctas\n\n' +
+        
+        '**EJEMPLOS DE CORRECCIONES:**\n\n' +
+        
+        'INCORRECTO:\n' +
+        '```\n' +
+        'User → Post (1 a *) donde "Post pertenece a muchos Users"\n' +
+        '```\n' +
+        'CORRECTO:\n' +
+        '```\n' +
+        'User → Post (1 a *) donde "User tiene muchos Posts"\n' +
+        '```\n\n' +
+        
+        'INCORRECTO:\n' +
+        '```\n' +
+        'name: "users" (plural y minúscula)\n' +
+        'attribute: "Nombre: string" (mayúscula en atributo)\n' +
+        '```\n' +
+        'CORRECTO:\n' +
+        '```\n' +
+        'name: "User" (singular y mayúscula)\n' +
+        'attribute: "nombre: string" (minúscula en atributo)\n' +
+        '```\n\n' +
+        
+        '**FORMATO DE RESPUESTA:**\n' +
+        'Debes responder ÚNICAMENTE con un JSON que tenga esta estructura EXACTA:\n' +
+        '```json\n' +
+        '{\n' +
+        '  "perfect": "yes|no",\n' +
+        '  "diagram": "AQUÍ_EL_JSON_GOJS_CORREGIDO_O_ORIGINAL"\n' +
+        '}\n' +
+        '```\n\n' +
+        
+        '**REGLAS CRÍTICAS:**\n' +
+        '- Si el diagrama está perfecto: "perfect": "yes" y "diagram" con el mismo JSON recibido\n' +
+        '- Si requiere correcciones: "perfect": "no" y "diagram" con el JSON corregido\n' +
+        '- NO incluir explicaciones, texto adicional, ni bloques de código markdown\n' +
+        '- El JSON debe ser válido y parseable\n' +
+        '- Mantener toda la estructura original, solo corregir lo que esté mal\n\n' +
+        
+        '**ANÁLISIS PASO A PASO:**\n' +
+        '1. Revisar lógica de relaciones (¿tiene sentido semántico?)\n' +
+        '2. Verificar multiplicidades (¿están correctas?)\n' +
+        '3. Corregir ortografía y nomenclatura\n' +
+        '4. Validar estructura GoJS\n' +
+        '5. Determinar si es "perfect": "yes" o "no"';
+
+      const userMessage = `Analiza este diagrama GoJS y determina si está correctamente construido. Si encuentras errores de lógica, multiplicidades, ortografía o estructura, corrígelos:\n\n${JSON.stringify(gojsDiagram, null, 2)}`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: systemMessage,
+          },
+          {
+            role: 'user',
+            content: userMessage,
+          },
+        ],
+        temperature: 0.1, // Muy determinístico para validaciones
+        max_tokens: 4000,
+      });
+
+      let response = completion.choices[0]?.message?.content;
+
+      if (!response) {
+        throw new BadRequestException('No se pudo validar el diagrama');
+      }
+
+      // Limpiar cualquier bloque de código markdown que pueda aparecer
+      response = response
+        .replace(/^```json\s*/, '') // Remover ```json al inicio
+        .replace(/^```\s*/, '')     // Remover ``` al inicio
+        .replace(/\s*```$/, '')     // Remover ``` al final
+        .trim();                    // Remover espacios en blanco
+
+      // Intentar parsear el JSON de respuesta
+      let parsedResponse;
+      try {
+        parsedResponse = JSON.parse(response);
+      } catch (parseError) {
+        throw new BadRequestException('La respuesta de la IA no es un JSON válido');
+      }
+
+      // Validar que tenga la estructura esperada
+      if (!parsedResponse.perfect || !parsedResponse.diagram) {
+        throw new BadRequestException('La respuesta no tiene la estructura esperada (perfect, diagram)');
+      }
+
+      // Si el diagram es un string, parsearlo; si es objeto, dejarlo así
+      let diagramData;
+      if (typeof parsedResponse.diagram === 'string') {
+        try {
+          diagramData = JSON.parse(parsedResponse.diagram);
+        } catch {
+          throw new BadRequestException('El diagrama corregido no es un JSON válido');
+        }
+      } else {
+        diagramData = parsedResponse.diagram;
+      }
+
+      // Validar que mantenga la estructura GoJS básica
+      if (!diagramData.nodeDataArray || !diagramData.linkDataArray) {
+        throw new BadRequestException('El diagrama corregido no mantiene la estructura GoJS correcta');
+      }
+
+      return {
+        perfect: parsedResponse.perfect,
+        diagram: JSON.stringify(diagramData), // Siempre devolver como string JSON
+        originalDiagram: gojsDiagram,
+        correctedDiagram: diagramData, // Para análisis interno
+        model: completion.model,
+        usage: {
+          promptTokens: completion.usage?.prompt_tokens,
+          completionTokens: completion.usage?.completion_tokens,
+          totalTokens: completion.usage?.total_tokens,
+        },
+      };
+    } catch (error) {
+      if (error.response?.status === 401) {
+        throw new BadRequestException('API key de OpenAI inválida');
+      }
+      if (error.response?.status === 429) {
+        throw new BadRequestException('Límite de solicitudes excedido. Intenta más tarde.');
+      }
+      throw new BadRequestException(`Error al validar el diagrama: ${error.message}`);
+    }
   }
 }

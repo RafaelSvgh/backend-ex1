@@ -1,7 +1,7 @@
 import { Controller, Post, Body, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AiService } from './ai.service';
-import { AskQuestionDto, AnalyzeImageDto, FixMultiplicityDto } from './dto';
+import { AskQuestionDto, AnalyzeImageDto, FixMultiplicityDto, ValidateDiagramDto } from './dto';
 import { Express } from 'express';
 
 @Controller('ai')
@@ -58,5 +58,10 @@ export class AiController {
       file.mimetype, 
       analyzeImageDto.additionalContext
     );
+  }
+
+  @Post('validate-diagram')
+  async validateDiagram(@Body() validateDiagramDto: ValidateDiagramDto) {
+    return this.aiService.validateAndCorrectDiagram(validateDiagramDto.gojsDiagram);
   }
 }

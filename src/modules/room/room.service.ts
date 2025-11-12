@@ -2337,4 +2337,115 @@ ${pagesArray}
 
     return typeMap[javaType] || 'String';
   }
+
+  // Método para actualizar el diagrama de una sala
+  async updateDiagram(roomId: string, diagram: any) {
+    try {
+      // Verificar que la sala exista
+      const existingRoom = await this.room.findUnique({
+        where: { id: roomId }
+      });
+
+      if (!existingRoom) {
+        throw new HttpException(
+          {
+            message: 'Room not found',
+            status: HttpStatus.NOT_FOUND,
+          },
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      // Convertir el diagrama a string JSON para guardarlo
+      const diagramString = typeof diagram === 'string' ? diagram : JSON.stringify(diagram);
+
+      // Actualizar el diagrama en la base de datos
+      const updatedRoom = await this.room.update({
+        where: { id: roomId },
+        data: { 
+          diagram: diagramString,
+          updatedAt: new Date()
+        },
+      });
+
+      return {
+        message: 'Diagram updated successfully',
+        room: {
+          id: updatedRoom.id,
+          name: updatedRoom.name,
+          diagram: JSON.parse(updatedRoom.diagram), // Devolver como objeto para facilidad de uso
+          updatedAt: updatedRoom.updatedAt,
+          adminId: updatedRoom.adminId
+        }
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        {
+          message: 'Error updating diagram',
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // Método para obtener todas las salas de un admin
+  async findRoomsByAdmin(adminId: number) {
+    try {
+      const rooms = await this.room.findMany({
+        where: { adminId },
+        include: {
+          admin: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          },
+          users: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: {
+          createdAt: 'desc'
+        }
+      });
+
+      // Transformar los diagramas de string a objeto JSON
+      const roomsWithParsedDiagrams = rooms.map(room => ({
+        ...room,
+        diagram: room.diagram ? JSON.parse(room.diagram) : null,
+        userCount: room.users.length,
+        users: room.users.map(userRoom => userRoom.user)
+      }));
+
+      return {
+        message: 'Rooms retrieved successfully',
+        adminId,
+        totalRooms: rooms.length,
+        rooms: roomsWithParsedDiagrams
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          message: 'Error retrieving admin rooms',
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error.message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }

@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Res } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Res, BadRequestException } from '@nestjs/common';
 import { Response } from 'express';
 import { RoomService } from './room.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { UpdateDiagramDto } from './dto/update-diagram.dto';
 import { generarID } from 'src/helpers/generate-id.helper';
 import * as archiver from 'archiver';
 import * as path from 'path';
@@ -245,6 +246,22 @@ export class RoomController {
         });
       }
     }
+  }
+
+  @Post('update-diagram')
+  async updateDiagram(@Body() updateDiagramDto: UpdateDiagramDto) {
+    return this.roomService.updateDiagram(updateDiagramDto.roomId, updateDiagramDto.diagram);
+  }
+
+  @Get('admin/:adminId')
+  async getRoomsByAdmin(@Param('adminId') adminId: string) {
+    const adminIdNumber = parseInt(adminId, 10);
+    
+    if (isNaN(adminIdNumber)) {
+      throw new BadRequestException('Invalid admin ID format');
+    }
+    
+    return this.roomService.findRoomsByAdmin(adminIdNumber);
   }
 
 }
