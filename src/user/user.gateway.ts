@@ -147,8 +147,6 @@ export class UserGateway implements OnModuleInit {
       socket.on("recargar-todo", (payload) => {
         socket.to(payload.room).emit('recargar-todo-cliente', payload.diagrama);
       });
-
-
     });
   }
 }
