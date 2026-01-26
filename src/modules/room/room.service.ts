@@ -839,9 +839,13 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;`;
 
-    // Agregar imports para servicios de entidades relacionadas
+    // Agregar imports para entidades y servicios relacionados
     if (relations) {
       for (const relation of relations) {
+        // Importar la entidad relacionada
+        imports += `
+import com.example.back_examen.entity.${relation.targetEntity};`;
+
         if (relation.relationType === 'ManyToOne' || relation.relationType === 'OneToOne') {
           imports += `
 import com.example.back_examen.service.${relation.targetEntity}Service;`;
@@ -1130,9 +1134,23 @@ public class Update${entityName}Dto {
   }
 
   private generateResponseDtoTemplate(entityName: string, attributes: ParsedAttribute[], relations?: EntityRelation[]): string {
-    let content = `package com.example.back_examen.dto;
+    // Determinar si necesitamos importar List
+    const hasToManyRelations = relations?.some(
+      rel => rel.relationType === 'OneToMany' || rel.relationType === 'ManyToMany'
+    );
+
+    let imports = `package com.example.back_examen.dto;
 
 import lombok.Data;
+import com.example.back_examen.entity.${entityName};`;
+
+    // Agregar import de List si hay relaciones ToMany
+    if (hasToManyRelations) {
+      imports += `
+import java.util.List;`;
+    }
+
+    let content = imports + `
 
 @Data
 public class ${entityName}ResponseDto {
@@ -1607,6 +1625,12 @@ public class ${entityName}ResponseDto {
   }
 
   private generateFlutterModel(entityName: string, attributes: ParsedAttribute[], relations: EntityRelation[]): string {
+    // Generar importaciones para modelos relacionados
+    const relatedImports = relations
+      .map(rel => `import 'package:flutter_front/src/models/${rel.targetEntity.toLowerCase()}_model.dart';`)
+      .filter((value, index, self) => self.indexOf(value) === index) // Eliminar duplicados
+      .join('\n');
+
     const fields = attributes.map(attr => {
       const dartType = this.javaToDartType(attr.type);
       return `  final ${dartType}? ${attr.name};`;
@@ -1627,12 +1651,12 @@ public class ${entityName}ResponseDto {
     }).join('\n');
 
     const constructorParams = attributes.map(attr => `this.${attr.name}`).join(', ');
-    
+
     const foreignKeyParams = relations
       .filter(rel => rel.relationType === 'ManyToOne' && rel.joinColumn)
       .map(rel => `this.${rel.joinColumn}`)
       .join(', ');
-    
+
     const relationParams = relations.map(rel => {
       if (rel.relationType === 'OneToMany') {
         return `this.${rel.targetEntity.toLowerCase()}s`;
@@ -1646,7 +1670,9 @@ public class ${entityName}ResponseDto {
     const jsonConstructor = this.generateFlutterFromJsonConstructor(entityName, attributes, relations);
     const toJsonMethod = this.generateFlutterToJsonMethod(attributes, relations);
 
-    return `class ${entityName} {
+    const importsSection = relatedImports ? `${relatedImports}\n\n` : '';
+
+    return `${importsSection}class ${entityName} {
   final int? id;
 ${fields}
 ${foreignKeyFields}
@@ -1801,7 +1827,7 @@ class ${entityName}Service {
     const lowerEntityName = entityName.toLowerCase();
     const formFields = this.generateFlutterFormFieldsWithRelations(attributes, relations);
     const listTileFields = this.generateFlutterListTileFields(attributes);
-    
+
     // Generar imports de servicios relacionados
     const relatedImports = relations
       .filter(rel => rel.relationType === 'ManyToOne')
@@ -1837,7 +1863,7 @@ class ${entityName}Service {
         _available${rel.targetEntity}s = items;
       });
     } catch (e) {
-      print('Error loading ${rel.targetEntity.toLowerCase()}s: \$e');
+      debugPrint('Error loading ${rel.targetEntity.toLowerCase()}s: \$e');
     }
   }`)
       .join('\n');
@@ -1879,20 +1905,50 @@ ${loadRelatedEntities}
       setState(() {
         _isLoading = false;
       });
-      _showErrorDialog('Error loading ${lowerEntityName}s: \$e');
+      _showError('Error al cargar ${lowerEntityName}s');
     }
   }
 ${loadRelatedMethods}
 
-  Future<void> _showCreateDialog() async {
-    await _showFormDialog(null);
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.error_outline, color: Theme.of(context).colorScheme.onError),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
-  Future<void> _showEditDialog(${entityName} item) async {
-    await _showFormDialog(item);
+  void _showSuccess(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle_outline, color: Theme.of(context).colorScheme.onPrimary),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
-  Future<void> _showFormDialog(${entityName}? item) async {
+  Future<void> _showFormBottomSheet(${entityName}? item) async {
     ${formFields.controllers}
     ${formFields.stateVariables}
 
@@ -1900,35 +1956,156 @@ ${loadRelatedMethods}
       ${formFields.initialization}
     }
 
-    await showDialog(
+    await showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(item == null ? 'Create ${entityName}' : 'Edit ${entityName}'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ${formFields.widgets}
-              ],
+        builder: (context, setDialogState) {
+          final colorScheme = Theme.of(context).colorScheme;
+          return Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
             ),
-            ElevatedButton(
-              onPressed: () async {
-                await _saveItem(item, {
-                  ${formFields.values}
-                });
-                Navigator.pop(context);
-              },
-              child: Text(item == null ? 'Create' : 'Update'),
+            child: DraggableScrollableSheet(
+              initialChildSize: 0.7,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              expand: false,
+              builder: (context, scrollController) => Column(
+                children: [
+                  // Handle bar
+                  Container(
+                    margin: const EdgeInsets.only(top: 12, bottom: 8),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurfaceVariant.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(
+                            item == null ? Icons.add_rounded : Icons.edit_rounded,
+                            color: colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item == null ? 'Nuevo ${entityName}' : 'Editar ${entityName}',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                item == null ? 'Completa los campos' : 'Modifica los campos',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton.filled(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close_rounded),
+                          style: IconButton.styleFrom(
+                            backgroundColor: colorScheme.surfaceContainerHighest,
+                            foregroundColor: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  // Form content
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ${formFields.widgets}
+                          const SizedBox(height: 24),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Actions
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.shadow.withOpacity(0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: const Text('Cancelar'),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          flex: 2,
+                          child: FilledButton.icon(
+                            onPressed: () async {
+                              await _saveItem(item, {
+                                ${formFields.values}
+                              });
+                              if (context.mounted) Navigator.pop(context);
+                            },
+                            icon: Icon(item == null ? Icons.add_rounded : Icons.save_rounded),
+                            label: Text(item == null ? 'Crear' : 'Guardar'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -1936,107 +2113,288 @@ ${loadRelatedMethods}
   Future<void> _saveItem(${entityName}? existingItem, Map<String, dynamic> data) async {
     try {
       final item = ${entityName}.fromJson(data);
-      
+
       if (existingItem == null) {
         await _service.create(item);
+        _showSuccess('${entityName} creado exitosamente');
       } else {
         await _service.update(existingItem.id!, item);
+        _showSuccess('${entityName} actualizado exitosamente');
       }
-      
+
       await _loadItems();
     } catch (e) {
-      _showErrorDialog('Error saving ${lowerEntityName}: \$e');
+      _showError('Error al guardar ${lowerEntityName}');
     }
   }
 
   Future<void> _deleteItem(${entityName} item) async {
-    final confirmed = await showDialog<bool>(
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Delete'),
-        content: Text('Are you sure you want to delete this ${lowerEntityName}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.delete_outline_rounded,
+                size: 32,
+                color: colorScheme.onErrorContainer,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Eliminar ${entityName}',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '¿Estás seguro de que deseas eliminar este ${lowerEntityName}? Esta acción no se puede deshacer.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Text('Cancelar'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.pop(context, true),
+                    icon: const Icon(Icons.delete_rounded),
+                    label: const Text('Eliminar'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: colorScheme.error,
+                      foregroundColor: colorScheme.onError,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: MediaQuery.of(context).padding.bottom),
+          ],
+        ),
       ),
     );
 
     if (confirmed == true) {
       try {
         await _service.delete(item.id!);
+        _showSuccess('${entityName} eliminado exitosamente');
         await _loadItems();
       } catch (e) {
-        _showErrorDialog('Error deleting ${lowerEntityName}: \$e');
+        _showError('Error al eliminar ${lowerEntityName}');
       }
     }
   }
 
-  void _showErrorDialog(String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Error'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        title: Text('${entityName}s'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _showCreateDialog,
-          ),
-        ],
+        title: Text(
+          '${entityName}s',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        elevation: 0,
+        scrolledUnderElevation: 2,
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadItems,
-              child: ListView.builder(
-                itemCount: _items.length,
-                itemBuilder: (context, index) {
-                  final item = _items[index];
-                  return Card(
-                    margin: const EdgeInsets.all(8.0),
-                    child: ListTile(
-                      title: ${listTileFields.title},
-                      subtitle: ${listTileFields.subtitle},
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () => _showEditDialog(item),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete),
-                            onPressed: () => _deleteItem(item),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Cargando...',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
               ),
-            ),
+            )
+          : _items.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer.withOpacity(0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.inbox_outlined,
+                          size: 64,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'No hay ${lowerEntityName}s',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Crea uno nuevo para comenzar',
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton.icon(
+                        onPressed: () => _showFormBottomSheet(null),
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('Crear ${entityName}'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _loadItems,
+                  color: colorScheme.primary,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                    itemCount: _items.length,
+                    itemBuilder: (context, index) {
+                      final item = _items[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Card(
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(
+                              color: colorScheme.outlineVariant.withOpacity(0.5),
+                            ),
+                          ),
+                          child: InkWell(
+                            onTap: () => _showFormBottomSheet(item),
+                            borderRadius: BorderRadius.circular(20),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 56,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          colorScheme.primaryContainer,
+                                          colorScheme.secondaryContainer,
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        (${listTileFields.avatarLetter}).toUpperCase(),
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          color: colorScheme.onPrimaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        ${listTileFields.title},
+                                        const SizedBox(height: 4),
+                                        ${listTileFields.subtitle},
+                                      ],
+                                    ),
+                                  ),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        onPressed: () => _showFormBottomSheet(item),
+                                        icon: const Icon(Icons.edit_outlined),
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: colorScheme.primaryContainer.withOpacity(0.5),
+                                          foregroundColor: colorScheme.primary,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        onPressed: () => _deleteItem(item),
+                                        icon: const Icon(Icons.delete_outline_rounded),
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: colorScheme.errorContainer.withOpacity(0.5),
+                                          foregroundColor: colorScheme.error,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+      floatingActionButton: _items.isNotEmpty
+          ? FloatingActionButton.extended(
+              onPressed: () => _showFormBottomSheet(null),
+              elevation: 2,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Nuevo'),
+            )
+          : null,
     );
   }
 }
@@ -2071,33 +2429,88 @@ ${loadRelatedMethods}
 
     const fullInitialization = [initialization, relationInitialization].filter(i => i).join('\n      ');
 
-    // Widgets: TextFields para atributos y Dropdowns para relaciones
-    const attributeWidgets = attributes.map(attr => {
-      return `TextField(
-                controller: _${attr.name}Controller,
-                decoration: InputDecoration(labelText: '${this.capitalizeFirstLetter(attr.name)}'),
-              ),`;
-    }).join('\n              ');
+    // Widgets: TextFields para atributos y Dropdowns para relaciones con estilo Material 3
+    const attributeWidgets = attributes.map((attr, index) => {
+      const icon = this.getIconForFieldType(attr.type, attr.name);
+      return `Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: TextField(
+                            controller: _${attr.name}Controller,
+                            decoration: InputDecoration(
+                              labelText: '${this.capitalizeFirstLetter(attr.name)}',
+                              hintText: 'Ingresa ${attr.name.toLowerCase()}',
+                              prefixIcon: Icon(${icon}),
+                              filled: true,
+                              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  width: 2,
+                                ),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                            ),
+                          ),
+                        ),`;
+    }).join('\n                        ');
 
     const relationWidgets = relations
       .filter(rel => rel.relationType === 'ManyToOne')
       .map(rel => {
-        return `DropdownButtonFormField<${rel.targetEntity}>(
-                value: _selected${rel.targetEntity},
-                decoration: InputDecoration(labelText: 'Select ${rel.targetEntity}'),
-                items: _available${rel.targetEntity}s.map((${rel.targetEntity.toLowerCase()}) {
-                  return DropdownMenuItem<${rel.targetEntity}>(
-                    value: ${rel.targetEntity.toLowerCase()},
-                    child: Text(${rel.targetEntity.toLowerCase()}.name?.toString() ?? ${rel.targetEntity.toLowerCase()}.id?.toString() ?? 'Unknown'),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setDialogState(() {
-                    _selected${rel.targetEntity} = value;
-                  });
-                },
-              ),`;
-      }).join('\n              ');
+        return `Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: DropdownButtonFormField<${rel.targetEntity}>(
+                            value: _selected${rel.targetEntity},
+                            decoration: InputDecoration(
+                              labelText: 'Seleccionar ${rel.targetEntity}',
+                              prefixIcon: const Icon(Icons.link_rounded),
+                              filled: true,
+                              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  width: 2,
+                                ),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            items: _available${rel.targetEntity}s.map((${rel.targetEntity.toLowerCase()}) {
+                              return DropdownMenuItem<${rel.targetEntity}>(
+                                value: ${rel.targetEntity.toLowerCase()},
+                                child: Text(${rel.targetEntity.toLowerCase()}.nombre?.toString() ?? ${rel.targetEntity.toLowerCase()}.id?.toString() ?? 'Desconocido'),
+                              );
+                            }).toList(),
+                            onChanged: (value) {
+                              setDialogState(() {
+                                _selected${rel.targetEntity} = value;
+                              });
+                            },
+                          ),
+                        ),`;
+      }).join('\n                        ');
 
     const allWidgets = [attributeWidgets, relationWidgets].filter(w => w).join('\n              ');
 
@@ -2169,18 +2582,92 @@ ${loadRelatedMethods}
   }
 
   private generateFlutterListTileFields(attributes: ParsedAttribute[]) {
-    const titleField = attributes.find(attr => 
+    const titleField = attributes.find(attr =>
       ['name', 'title', 'nombre', 'titulo'].includes(attr.name.toLowerCase())
     ) || attributes[0];
 
     const subtitleFields = attributes.filter(attr => attr.name !== titleField?.name).slice(0, 2);
 
-    const title = `Text(item.${titleField?.name}?.toString() ?? 'No name')`;
-    const subtitle = subtitleFields.length > 0 
-      ? `Text('${subtitleFields.map(f => `${this.capitalizeFirstLetter(f.name)}: \${item.${f.name} ?? "N/A"}`).join(' | ')}')`
-      : `Text('ID: \${item.id}')`;
+    // Avatar letter - primera letra del campo título
+    const avatarLetter = `item.${titleField?.name}?.toString().isNotEmpty == true ? item.${titleField?.name}!.toString()[0] : '?'`;
 
-    return { title, subtitle };
+    // Título con estilo mejorado
+    const title = `Text(
+                                        item.${titleField?.name}?.toString() ?? 'Sin nombre',
+                                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      )`;
+
+    // Subtítulo con chips o texto según la cantidad de campos
+    let subtitle: string;
+    if (subtitleFields.length > 0) {
+      const chipWidgets = subtitleFields.map(f =>
+        `Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: colorScheme.secondaryContainer.withOpacity(0.5),
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              '\${item.${f.name} ?? "N/A"}',
+                                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                color: colorScheme.onSecondaryContainer,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          )`
+      ).join(',\n                                          const SizedBox(width: 8),\n                                          ');
+
+      subtitle = `Wrap(
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        children: [
+                                          ${chipWidgets}
+                                        ],
+                                      )`;
+    } else {
+      subtitle = `Text(
+                                        'ID: \${item.id}',
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      )`;
+    }
+
+    return { title, subtitle, avatarLetter };
+  }
+
+  private getIconForFieldType(type: string, name: string): string {
+    const nameLower = name.toLowerCase();
+
+    // Basado en nombre del campo
+    if (nameLower.includes('email') || nameLower.includes('correo')) return 'Icons.email_outlined';
+    if (nameLower.includes('phone') || nameLower.includes('telefono') || nameLower.includes('tel')) return 'Icons.phone_outlined';
+    if (nameLower.includes('name') || nameLower.includes('nombre')) return 'Icons.person_outline_rounded';
+    if (nameLower.includes('title') || nameLower.includes('titulo')) return 'Icons.title_rounded';
+    if (nameLower.includes('description') || nameLower.includes('descripcion')) return 'Icons.description_outlined';
+    if (nameLower.includes('address') || nameLower.includes('direccion')) return 'Icons.location_on_outlined';
+    if (nameLower.includes('date') || nameLower.includes('fecha')) return 'Icons.calendar_today_outlined';
+    if (nameLower.includes('price') || nameLower.includes('precio') || nameLower.includes('cost')) return 'Icons.attach_money_rounded';
+    if (nameLower.includes('password') || nameLower.includes('contrasena')) return 'Icons.lock_outline_rounded';
+    if (nameLower.includes('url') || nameLower.includes('link') || nameLower.includes('web')) return 'Icons.link_rounded';
+    if (nameLower.includes('image') || nameLower.includes('imagen') || nameLower.includes('photo')) return 'Icons.image_outlined';
+    if (nameLower.includes('quantity') || nameLower.includes('cantidad') || nameLower.includes('count')) return 'Icons.numbers_rounded';
+    if (nameLower.includes('age') || nameLower.includes('edad')) return 'Icons.cake_outlined';
+    if (nameLower.includes('color')) return 'Icons.palette_outlined';
+    if (nameLower.includes('status') || nameLower.includes('estado')) return 'Icons.flag_outlined';
+    if (nameLower.includes('category') || nameLower.includes('categoria')) return 'Icons.category_outlined';
+    if (nameLower.includes('note') || nameLower.includes('nota') || nameLower.includes('comment')) return 'Icons.note_outlined';
+
+    // Basado en tipo de dato
+    if (type === 'int' || type === 'Integer' || type === 'double' || type === 'Double') return 'Icons.numbers_rounded';
+    if (type === 'DateTime') return 'Icons.schedule_rounded';
+    if (type === 'boolean' || type === 'Boolean') return 'Icons.toggle_on_outlined';
+
+    return 'Icons.text_fields_rounded';
   }
 
   private async updateFlutterNavigation(pagesList: any[], basePath: string) {
